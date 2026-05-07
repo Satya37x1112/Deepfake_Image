@@ -10,6 +10,11 @@ import os
 import sys
 from datetime import datetime
 import uuid
+import requests
+import base64
+import concurrent.futures
+import json
+import re
 
 # Add parent directory to path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -130,6 +135,128 @@ except Exception as e:
 print("=" * 80)
 
 
+# OpenRouter fallback configuration
+OPENROUTER_API_KEY = os.environ.get('OPENROUTER_API_KEY')
+OPENROUTER_MODEL = 'google/gemini-2.0-flash-lite-preview-02-05:free'
+LOCAL_MODEL_TIMEOUT = 15  # seconds
+OPENROUTER_API_TIMEOUT = 30  # seconds
+
+
+def call_openrouter_api(image_path):
+    """
+    Fallback to OpenRouter vision model when local model fails or times out.
+    Returns a dict in the same format as detector.predict().
+    """
+    try:
+        with open(image_path, 'rb') as f:
+            image_bytes = f.read()
+
+        ext = os.path.splitext(image_path)[1].lower().replace('.', '')
+        if ext in ('jpg', 'jpeg'):
+            mime = 'image/jpeg'
+        elif ext == 'png':
+            mime = 'image/png'
+        else:
+            mime = 'image/jpeg'
+
+        b64 = base64.b64encode(image_bytes).decode('utf-8')
+        data_uri = f'data:{mime};base64,{b64}'
+
+        headers = {
+            'Authorization': f'Bearer {OPENROUTER_API_KEY}',
+            'Content-Type': 'application/json',
+            'HTTP-Referer': 'https://localhost',
+            'X-Title': 'Deepfake Detection API'
+        }
+
+        payload = {
+            'model': OPENROUTER_MODEL,
+            'messages': [
+                {
+                    'role': 'user',
+                    'content': [
+                        {
+                            'type': 'text',
+                            'text': (
+                                'You are a forensic image analysis expert. '
+                                'Analyze this image and determine whether it is a REAL photograph or an AI-generated/DEEPFAKE image. '
+                                'Return ONLY a JSON object with no markdown formatting in this exact schema: '
+                                '{"prediction": "real" or "fake", "confidence": <float 0.0-1.0>, "reasoning": "<one sentence>"}. '
+                                'Be decisive: choose either "real" or "fake".'
+                            )
+                        },
+                        {
+                            'type': 'image_url',
+                            'image_url': {'url': data_uri}
+                        }
+                    ]
+                }
+            ],
+            'temperature': 0.1,
+            'max_tokens': 256
+        }
+
+        resp = requests.post(
+            'https://openrouter.ai/api/v1/chat/completions',
+            headers=headers,
+            json=payload,
+            timeout=OPENROUTER_API_TIMEOUT
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        content = data['choices'][0]['message']['content']
+
+        # Try to extract JSON from the LLM response
+        prediction = 'unknown'
+        confidence = 0.5
+        reasoning = ''
+        try:
+            match = re.search(r'\{.*\}', content, re.DOTALL)
+            if match:
+                parsed = json.loads(match.group(0))
+                prediction = str(parsed.get('prediction', '')).lower().strip()
+                confidence = float(parsed.get('confidence', 0.5))
+                reasoning = parsed.get('reasoning', '')
+        except Exception:
+            pass
+
+        # Fallback keyword heuristic if JSON parsing fails or prediction is invalid
+        if prediction not in ('real', 'fake'):
+            lower = content.lower()
+            if any(word in lower for word in ('fake', 'deepfake', 'ai-generated', 'synthetic', 'generated')):
+                prediction = 'fake'
+                confidence = 0.75
+            else:
+                prediction = 'real'
+                confidence = 0.75
+
+        label = 'Fake' if prediction == 'fake' else 'Real'
+        if prediction == 'fake':
+            probabilities = [round(1.0 - confidence, 4), round(confidence, 4)]
+        else:
+            probabilities = [round(confidence, 4), round(1.0 - confidence, 4)]
+
+        return {
+            'prediction': prediction,
+            'label': label,
+            'confidence': round(confidence, 4),
+            'probabilities': probabilities,
+            'source': 'openrouter_fallback',
+            'model': OPENROUTER_MODEL,
+            'reasoning': reasoning
+        }
+
+    except Exception as e:
+        return {
+            'prediction': 'unknown',
+            'label': 'Unknown',
+            'confidence': 0.0,
+            'probabilities': [0.5, 0.5],
+            'source': 'openrouter_fallback_failed',
+            'error': str(e)
+        }
+
+
 def allowed_file(filename):
     """Check if file extension is allowed"""
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
@@ -234,13 +361,8 @@ def detect():
     Main detection endpoint.
     Upload an image and get deepfake detection results.
     """
-    # Check if model is loaded
-    if not MODEL_LOADED:
-        return jsonify({
-            'error': 'Model not loaded. Please ensure the model file exists.',
-            'model_path': MODEL_PATH,
-            'suggestion': 'Train a model using train.py first'
-        }), 503
+    # If model is not loaded we skip local detection and go straight to OpenRouter fallback
+    model_available = MODEL_LOADED
     
     # Check if file is in request
     if 'image' not in request.files:
@@ -272,8 +394,30 @@ def detect():
         filepath = os.path.join(app.config['UPLOAD_FOLDER'], unique_filename)
         file.save(filepath)
         
-        # Perform detection
-        result = detector.predict(filepath)
+        # Perform detection with 15-second timeout on local model
+        local_result = None
+        local_error = None
+
+        if model_available:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(detector.predict, filepath)
+                try:
+                    local_result = future.result(timeout=LOCAL_MODEL_TIMEOUT)
+                except concurrent.futures.TimeoutError:
+                    local_error = f'Local model timed out after {LOCAL_MODEL_TIMEOUT} seconds'
+                except Exception as e:
+                    local_error = str(e)
+
+        if local_result is not None and isinstance(local_result, dict) and 'error' not in local_result:
+            result = local_result
+            result['source'] = 'local_model'
+        else:
+            # Fallback to OpenRouter API
+            result = call_openrouter_api(filepath)
+            if local_error:
+                result['local_model_error'] = local_error
+            if not model_available:
+                result['local_model_error'] = 'Local model not loaded'
         
         # Add metadata
         result['filename'] = filename
