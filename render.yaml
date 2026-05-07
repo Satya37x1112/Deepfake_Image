@@ -1,0 +1,18 @@
+services:
+  - type: web
+    name: deepfake-image-detector
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python image-detection-module/api/app.py
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.10.13
+      - key: PORT
+        value: 10000
+      # TensorFlow optimizations for resource-constrained environments like Render Free Tier (512MB RAM)
+      - key: TF_CPP_MIN_LOG_LEVEL
+        value: "2"  # Suppresses info and warning logs to keep logs clean and reduce memory overhead
+      - key: TF_NUM_INTEROP_THREADS
+        value: "1"  # Limit thread creation to conserve CPU and RAM on virtual environments
+      - key: TF_NUM_INTRAOP_THREADS
+        value: "1"

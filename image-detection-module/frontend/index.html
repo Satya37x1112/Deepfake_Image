@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Maya Image Detector</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <div class="header">
+            <h1>Deepfake Image Detector</h1>
+            <div class="status">
+                <span class="status-dot"></span>
+                <span id="statusText">Model Ready</span>
+            </div>
+        </div>
+
+        <!-- Error Message -->
+        <div id="error" class="error">
+            <span id="errorMessage"></span>
+        </div>
+
+        <!-- Upload Area -->
+        <div id="uploadArea" class="upload-area">
+            <div class="upload-icon">↑</div>
+            <div class="upload-text">
+                <h3>Upload Image for Analysis</h3>
+                <p>Drag and drop an image file here or click to browse</p>
+                <p class="formats">Supported formats: JPG, PNG, GIF • Max size: 50MB</p>
+            </div>
+            <input type="file" id="imageFile" accept="image/*" style="display: none;">
+            <button id="browseBtn" class="browse-btn">Browse Files</button>
+        </div>
+
+        <!-- File Info -->
+        <div id="fileInfo" class="file-info">
+            <div class="file-icon">📷</div>
+            <div class="file-details">
+                <div class="file-name" id="fileName"></div>
+                <div class="file-size" id="fileSize"></div>
+            </div>
+            <button id="removeFile" class="remove-file">✕</button>
+        </div>
+
+        <!-- Analyze Button -->
+        <button id="analyzeBtn" class="analyze-btn" disabled>
+            <span>🔍</span>
+            <span>Analyze Image</span>
+        </button>
+
+        <!-- Loading -->
+        <div id="loading" class="loading">
+            <div class="spinner"></div>
+            <div class="loading-text">Analyzing image... Please wait</div>
+        </div>
+
+        <!-- Results -->
+        <div id="results" class="results">
+            <div class="result-card">
+                <div class="result-header">
+                    <div id="predictionBadge" class="prediction-badge">Real</div>
+                    <div class="confidence" id="confidence">95.4%</div>
+                    <div class="confidence-label">Confidence Score</div>
+                </div>
+
+                <div class="probabilities">
+                    <div class="probability-item">
+                        <div class="probability-label">Real Image</div>
+                        <div class="probability-bar">
+                            <div id="realProbBar" class="probability-fill" style="width: 0%"></div>
+                        </div>
+                        <div class="probability-value" id="realProbValue">0%</div>
+                    </div>
+
+                    <div class="probability-item">
+                        <div class="probability-label">Deepfake Image</div>
+                        <div class="probability-bar">
+                            <div id="fakeProbBar" class="probability-fill" style="width: 0%"></div>
+                        </div>
+                        <div class="probability-value" id="fakeProbValue">0%</div>
+                    </div>
+                </div>
+
+                <button id="newAnalysis" class="new-analysis-btn">Analyze Another Image</button>
+            </div>
+        </div>
+
+        <!-- Footer -->
+        <div class="footer">
+            Deepfake Detection System • Model Accuracy: 70.11% • 
+            <a href="/api" target="_blank">API Info</a>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
